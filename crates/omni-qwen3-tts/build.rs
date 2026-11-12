@@ -1,7 +1,5 @@
 //! Compiles `kernels/*.cu` to the cubins the model's kern manifest pins.
-//! `OMNI_CUDA_ARCH` picks the target (default `103a`, GB300) and whether the
-//! manifest can use programmatic dependent launch (compute capability 9.0+).
-//! nvcc is `$NVCC`,
+//! `OMNI_CUDA_ARCH` picks the target (default `103a`, GB300). nvcc is `$NVCC`,
 //! else `$CUDA_PATH/bin/nvcc`, else `/usr/local/cuda/bin/nvcc`, else `nvcc` on
 //! the `PATH`.
 

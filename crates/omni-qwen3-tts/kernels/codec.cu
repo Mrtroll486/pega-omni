@@ -52,9 +52,7 @@ __device__ __forceinline__ void bias_snake8(float* v, const bf16* bias, const fl
   for (int k = 0; k < 8; ++k) v[k] = snake(v[k] + b[k], av[k], ib[k]);
 }
 
-// On sm90+, the manifest enables programmatic dependent launch: wait before
-// touching the predecessor's output, then allow the successor to launch.
-// Older targets rely on ordinary stream dependencies, including in graphs.
+// Wait before reading the predecessor's output, then allow successors to launch.
 __device__ __forceinline__ void pdl() {
 #if __CUDA_ARCH__ >= 900
   asm volatile("griddepcontrol.wait;\n\tgriddepcontrol.launch_dependents;" ::: "memory");

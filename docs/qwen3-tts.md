@@ -70,12 +70,11 @@ double-buffered history, overlap-add carrying the previous frame's row,
 depthwise conv + LayerNorm, and the output conv. Residual GEMMs accumulate in
 place (cuBLASLt with beta = 1) and their biases ride along to the next
 consumer's epilogue, so no kernel exists only to add. On compute capability
-9.0+, every codec kernel launches with programmatic dependent launch (PDL)
-and loads its weights before waiting on its producer. Older targets use
-ordinary stream dependencies. Both paths retain CUDA graphs.
+9.0+, codec kernels use programmatic dependent launch (PDL). Older targets
+use ordinary stream dependencies. Both paths retain CUDA graphs.
 
-GEMMs are kern's cuBLASLt built-in. `build.rs` compiles both files to cubins
-(`OMNI_CUDA_ARCH`, default `103a`, GB300); the manifest pins their sha256.
+GEMMs are kern's cuBLASLt built-in. `build.rs` compiles both files to cubins;
+the manifest pins their sha256.
 kern verifies the manifest, checks every launch's ABI against its cubin,
 allocates buffers at their var bounds, hands out KV pages and state slots, and
 captures `first` and `decode` per bucket. Weight layout transforms (fused QKV
@@ -84,17 +83,9 @@ and gate/up, conv taps, folded scales) happen once at load, on the host.
 ## Build targets
 
 `OMNI_CUDA_ARCH` selects the target architecture (`103a` by default).
-For an RTX 3090 (`86`), build and run with a small batch and KV budget:
-
-```bash
-OMNI_CUDA_ARCH=86 CARGO_TARGET_DIR=target-sm86 \
-  cargo build --release --locked -p omni-server --no-default-features --features qwen3-tts
-CUDA_VISIBLE_DEVICES=0 target-sm86/release/pega-omni qwen3-tts \
-  --model-path /path/to/Qwen3-TTS-12Hz-1.7B-CustomVoice \
-  --model qwen3-tts --max-batch 2 --max-step-tokens 1024 --kv-gib 1
-```
-
 `NVCC` or `CUDA_PATH` selects the toolkit when it is not at the default path.
+For an RTX 3090, build with `OMNI_CUDA_ARCH=86` and start with a small budget,
+such as `--max-batch 2 --max-step-tokens 1024 --kv-gib 1`.
 
 ## Correctness
 
@@ -149,8 +140,7 @@ OMNI_CUDA_ARCH=86 CARGO_TARGET_DIR=target-sm86 CUDA_VISIBLE_DEVICES=0 \
   cargo test --release --locked -p omni-qwen3-tts --test golden -- --nocapture
 ```
 
-`OMNI_QWEN3_TTS_MODEL` and `OMNI_QWEN3_TTS_GOLDEN` must both be set; the
-test skips when either is unset. The thresholds were unchanged:
+The thresholds were unchanged:
 
 | check | sm86 result |
 |---|---|
@@ -162,14 +152,35 @@ test skips when either is unset. The thresholds were unchanged:
 | codec, a stream joining 7 frames late | 34.24 dB SNR |
 | two streams of the same forced frames | bit-identical waveforms |
 
+A repeat on 2026-11-13 (Asia/Shanghai), using the documented recorder versions
+and defaults, produced identical reference tensors and again 70 frames, not
+the original table's 79. The three-stream replay passed, with 34.59/34.19 dB
+SNR for the lockstep/late-joining streams. The table above retains the first
+3090 run. Its SNR and the original table's 36.6 dB use different fixtures and
+do not establish an architecture-dependent SNR change.
+
 The real server passed the official SDK check with openai 3.49.0 (WAV, PCM,
-SSE, errors and model listing) and the concurrent-request/cancellation e2e.
-With batch 2, 1024 prompt tokens and a 1 GiB KV setting, its process used
-6134 MiB after load and at most 6160 MiB in 0.5-second samples during the
-checks. Other GPU workloads were active; this is a functional validation
-and a sampled memory observation, not a throughput or latency measurement.
-The `103a` target was compiled; its GPU correctness and PDL execution still
-need a run on matching hardware.
+SSE, errors and model listing).
+With batch 2, 1024 prompt tokens and a 1 GiB KV setting, the maximum sampled
+process memory was 6160 MiB during local serving validation. Other GPU
+workloads were active; this is a functional validation and a sampled memory
+observation, not a throughput or latency measurement.
+
+### sm103a build equivalence
+
+Using nvcc 13.2.51 and the flags from `build.rs` (`-cubin -O3 -std=c++17`,
+`-I../omni-kern/kernels`, `-gencode=arch=compute_103a,code=sm_103a`), the
+following cubins are byte-identical between `main` at `dfdd530` and this
+branch's GPU sources at `f5f7e05`:
+
+| cubin | SHA256 on both revisions |
+|---|---|
+| codec | `8d614a692ce9f2d3f1759512e71e6309db883a91898d116356e0a689f585afb1` |
+| talker | `0e7ce4462a5739dc76702fb921fd3fc0db3cd06466321d461aa13aed3784decb` |
+
+Executing both revisions' `build.rs` produced the same cubins. For `103a`,
+the branch emits `qwen3_tts_pdl`, selecting the same `Gen::with_pdl(&["codec"])`
+manifest configuration as `main`.
 
 ## Performance
 
